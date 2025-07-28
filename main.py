@@ -1,9 +1,9 @@
-import time
+import os
 import re
+import csv
+import time
 import shutil
 import requests
-import os
-import csv
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
@@ -17,14 +17,12 @@ from selenium.webdriver.support import expected_conditions as EC
 try:
     from webdriver_manager.chrome import ChromeDriverManager
 except Exception:
-    ChromeDriverManager = None  # We’ll prefer system chromedriver on GitHub
+    ChromeDriverManager = None
 
-# --- Config ---
 LAST_PIC_FILE = "last_pic_url.txt"
-PIC_DIR       = "profile_pics"
-LOG_FILE      = "profile_log.csv"
+PIC_DIR = "profile_pics"
+LOG_FILE = "profile_log.csv"
 
-# --- Helpers ---
 def load_last_pic_url():
     if os.path.exists(LAST_PIC_FILE):
         with open(LAST_PIC_FILE, "r") as f:
@@ -36,18 +34,17 @@ def save_last_pic_url(url):
         f.write(url)
 
 def normalize_url(url: str) -> str:
-    # Strip query & fragment so CDN cache-busters don’t cause false “changes”
     parsed = urlparse(url)
     cleaned = parsed._replace(query="", fragment="")
     return urlunparse(cleaned)
 
 def download_image(url, filename):
-    resp = requests.get(url, stream=True, timeout=30)
-    resp.raise_for_status()
     os.makedirs(PIC_DIR, exist_ok=True)
     path = os.path.join(PIC_DIR, filename)
+    r = requests.get(url, stream=True, timeout=30)
+    r.raise_for_status()
     with open(path, "wb") as f:
-        for chunk in resp.iter_content(8192):
+        for chunk in r.iter_content(8192):
             f.write(chunk)
     return path
 
@@ -62,52 +59,38 @@ def log_to_csv(entry: dict):
         writer.writerow(entry)
 
 def _try_click_cookies(driver):
-    # Best‑effort: handle EU cookie dialog if shown
-    texts = [
-        "Only allow essential cookies",
-        "Allow all cookies",
-        "Accept all",
-        "Allow essential cookies",
-        "Accept"
-    ]
-    for t in texts:
+    for text in [
+        "Only allow essential cookies", "Allow all cookies",
+        "Accept all", "Allow essential cookies", "Accept"
+    ]:
         try:
             btn = WebDriverWait(driver, 3).until(
-                EC.element_to_be_clickable((By.XPATH, f"//button[contains(., '{t}')]"))
+                EC.element_to_be_clickable((By.XPATH, f"//button[contains(., '{text}')]"))
             )
             btn.click()
-            time.sleep(0.5)
+            time.sleep(0.3)
             return
         except Exception:
             pass
 
 def _get_profile_img_src(driver) -> str | None:
-    """
-    Try several selectors commonly present in mobile/guest views.
-    Fallback to og:image if no <img> is reachable.
-    """
     selectors = [
-        # Most reliable on mobile profile header:
         "img[alt$='profile picture']",
         "img[alt*='profile picture']",
-        # Generic header fallbacks:
         "header img[alt$='profile picture']",
         "header a img[alt$='profile picture']",
         "header a img",
     ]
-
-    # Wait up to ~12s for any of the image selectors to appear
-    deadline = time.time() + 12
-    while time.time() < deadline:
+    end = time.time() + 12
+    while time.time() < end:
         for sel in selectors:
-            elems = driver.find_elements(By.CSS_SELECTOR, sel)
-            if elems:
-                src = elems[0].get_attribute("src")
+            els = driver.find_elements(By.CSS_SELECTOR, sel)
+            if els:
+                src = els[0].get_attribute("src")
                 if src:
                     return src
         time.sleep(0.4)
-
-    # Fallback: <meta property="og:image" content="...">
+    # fallback to og:image
     try:
         og = driver.find_element(By.CSS_SELECTOR, "meta[property='og:image']")
         content = og.get_attribute("content")
@@ -115,33 +98,28 @@ def _get_profile_img_src(driver) -> str | None:
             return content
     except Exception:
         pass
-
     return None
 
 def _get_follow_counts(driver) -> tuple[str | None, str | None]:
-    """
-    Prefer the two number buttons in the header on mobile guest profiles.
-    If not present (interstitial/layout change), fall back to meta description.
-    """
-    # Try the two number buttons (“xx followers”, “yy following”)
+    # Prefer header buttons
     try:
-        # Give DOM a moment; many builds are slow under CI
         buttons = WebDriverWait(driver, 8).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "header section button"))
         )
         if len(buttons) >= 2:
             followers_text, following_text = buttons[0].text, buttons[1].text
             def num(txt):
+                if not txt:
+                    return None
                 m = re.search(r"[\d,.]+", txt.replace(",", ""))
                 return m.group(0) if m else None
             return num(followers_text), num(following_text)
     except Exception:
         pass
 
-    # Fallback: parse from <meta name="description">
+    # Fallback: parse meta description
     try:
         desc = driver.find_element(By.CSS_SELECTOR, "meta[name='description']").get_attribute("content") or ""
-        # Example: "105 followers, 128 following, 6 posts – ..."
         fol = re.search(r"([\d,.]+)\s+followers", desc)
         ing = re.search(r"([\d,.]+)\s+following", desc)
         followers = fol.group(1).replace(",", "") if fol else None
@@ -150,60 +128,74 @@ def _get_follow_counts(driver) -> tuple[str | None, str | None]:
     except Exception:
         return None, None
 
-# --- Main Scraper ---
+def _select_chrome_binary() -> str | None:
+    # 1) Respect CHROME_BIN if provided
+    env_bin = os.environ.get("CHROME_BIN")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+
+    # 2) Common locations/names (we include snap & chrome stable)
+    candidates = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/snap/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+        "google-chrome",
+        "chromium-browser",
+        "chromium",
+    ]
+    for c in candidates:
+        # If it's a bare name, which() it; if it looks like a path, check it.
+        if os.path.basename(c) == c:
+            p = shutil.which(c)
+            if p:
+                return p
+        else:
+            if os.path.exists(c):
+                return c
+    return None
+
 def scrape_and_log(username: str):
     url = f"https://www.instagram.com/{username}/"
 
-    # 1) Mobile emulation: iPhone X
     options = Options()
     options.add_experimental_option("mobileEmulation", {"deviceName": "iPhone X"})
-    # Use the modern headless; plus CI‑safe flags
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=0")
+    options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--window-size=390,844")
     options.add_argument("--lang=en-US,en")
-    # Slightly more “real” UA helps avoid some interstitials
     options.add_argument(
         "--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
     )
 
-    # 2) Tell Selenium where Chrome is
-    #    Prefer CHROME_BIN (we set it in the workflow), then common names (incl. snap path)
-    candidates = [
-        os.environ.get("CHROME_BIN"),
-        "chromium-browser",
-        "chromium",
-        "google-chrome",
-        "chrome",
-        "/snap/bin/chromium",
-    ]
-    for c in candidates:
-        if not c:
-            continue
-        p = shutil.which(c) if os.path.basename(c) == c else (c if os.path.exists(c) else None)
-        if p:
-            options.binary_location = p
-            break
+    chrome_binary = _select_chrome_binary()
+    if not chrome_binary:
+        raise RuntimeError(
+            "Could not locate a Chrome/Chromium binary. "
+            "Set CHROME_BIN or install google-chrome/chromium."
+        )
+    options.binary_location = chrome_binary
+    print(f"[debug] Using Chrome binary: {chrome_binary}")
 
-    # 3) Use system chromedriver if available (from apt: chromium-chromedriver)
+    # Prefer system chromedriver; fallback to webdriver-manager if not present
     driver_path = shutil.which("chromedriver")
     if not driver_path and ChromeDriverManager:
         driver_path = ChromeDriverManager().install()
     service = Service(executable_path=driver_path) if driver_path else Service()
+    if driver_path:
+        print(f"[debug] Using chromedriver: {driver_path}")
 
     driver = webdriver.Chrome(service=service, options=options)
 
     try:
         driver.get(url)
-
-        # Cookie gate if any
         _try_click_cookies(driver)
 
-        # ► Profile picture URL (robust)
         current_pic_url_raw = _get_profile_img_src(driver)
         if not current_pic_url_raw:
             raise RuntimeError("Could not locate profile picture on the page")
@@ -212,7 +204,6 @@ def scrape_and_log(username: str):
         last_pic_url = load_last_pic_url()
 
         if current_pic_url != last_pic_url:
-            # New picture: download with timestamped name
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{ts}_{username}_profile.jpg"
             download_image(current_pic_url_raw, filename)
@@ -221,7 +212,6 @@ def scrape_and_log(username: str):
         else:
             is_updated = 0
 
-        # ► Followers & Following (robust with fallback)
         followers, following = _get_follow_counts(driver)
 
         entry = {
