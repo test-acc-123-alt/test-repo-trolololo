@@ -3,40 +3,32 @@ name: Hourly Instagram Scrape
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'  # every hour at minute 0 (UTC)
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      # Install Google Chrome and a matching Chromedriver
-      - name: Setup Chrome
-        uses: browser-actions/setup-chrome@v1
-
-      - name: Setup Chromedriver
-        uses: browser-actions/setup-chromedriver@v1
-
-      - name: Show browser versions (debug)
+      # Install Google Chrome (for Testing) and matching ChromeDriver
+      - name: Set up Chrome + ChromeDriver
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true     # pulls required system libs
+          install-chromedriver: true     # also installs compatible chromedriver
+          chrome-version: stable          # or leave out to get "latest"
+      # (Optional) Show versions/paths for debugging
+      - name: Show browser paths
         run: |
-          which google-chrome || true
-          google-chrome --version || true
-          which chromedriver || true
-          chromedriver --version || true
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install selenium webdriver-manager requests
-
-      - name: Run scraper
-        env:
-          # Tell our script where Chrome lives
-          CHROME_BIN: /usr/bin/google-chrome
-        run: python main.py
+          echo "Chrome: ${{ steps.setup-chrome.outputs.chrome-path }}"
+          echo "ChromeDriver: ${{ steps.setup-chrome.outputs.chromedriver-path }}"
+          ${{ steps.setup-chrome.outputs.chrome-path }} --version
