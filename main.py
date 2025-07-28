@@ -66,10 +66,13 @@ def scrape_and_log(username: str):
     mobile_emulation = {"deviceName": "iPhone X"}
     options = Options()
     options.add_experimental_option("mobileEmulation", mobile_emulation)
-    options.add_argument("--headless")
+    # Use new headless mode and disable sandboxing
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--remote-debugging-port=9222")
 
     # 2) Auto-detect Chrome/Chromium binary
     for name in ("chromium-browser", "chromium", "google-chrome", "chrome"):
