@@ -24,15 +24,18 @@ def load_last_pic_url():
             return f.read().strip()
     return None
 
+
 def save_last_pic_url(url):
     with open(LAST_PIC_FILE, "w") as f:
         f.write(url)
+
 
 def normalize_url(url):
     # Strip query parameters and fragments
     parsed = urlparse(url)
     cleaned = parsed._replace(query="", fragment="")
     return urlunparse(cleaned)
+
 
 def download_image(url, filename):
     resp = requests.get(url, stream=True)
@@ -43,6 +46,7 @@ def download_image(url, filename):
         for chunk in resp.iter_content(8192):
             f.write(chunk)
     return path
+
 
 def log_to_csv(entry: dict):
     is_new = not os.path.exists(LOG_FILE)
@@ -64,6 +68,8 @@ def scrape_and_log(username: str):
     options.add_experimental_option("mobileEmulation", mobile_emulation)
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
     # 2) Auto-detect Chrome/Chromium binary
     for name in ("chromium-browser", "chromium", "google-chrome", "chrome"):
