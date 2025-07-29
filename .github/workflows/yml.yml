@@ -25,7 +25,8 @@ jobs:
         with:
           install-dependencies: true     # pulls required system libs
           install-chromedriver: true     # also installs compatible chromedriver
-          chrome-version: stable          # or leave out to get "latest"
+          chrome-version: stable         # or leave out to get "latest"
+
       # (Optional) Show versions/paths for debugging
       - name: Show browser paths
         run: |
@@ -44,3 +45,12 @@ jobs:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
         run: python main.py
+
+      - name: Upload profile data
+        uses: actions/upload-artifact@v3
+        with:
+          name: instagram-scrape
+          path: |
+            profile_pics
+            profile_log.csv
+            last_pic_url.txt
