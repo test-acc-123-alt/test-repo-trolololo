@@ -5,6 +5,7 @@ import requests
 import os
 import csv
 from datetime import datetime
+from urllib import parse
 
 # Use the modern zoneinfo if available (Python 3.9+), otherwise fall back to pytz
 try:
@@ -36,9 +37,9 @@ def save_last_pic_url(url):
         f.write(url)
 
 def normalize_url(url: str) -> str:
-    parsed = urlparse.urlparse(url)
+    parsed = parse.urlparse(url)
     cleaned = parsed._replace(query="", fragment="")
-    return urlparse.urlunparse(cleaned)
+    return parse.urlunparse(cleaned)
 
 def download_image(url, filename):
     resp = requests.get(url, stream=True, timeout=30)
@@ -53,8 +54,9 @@ def download_image(url, filename):
 def log_to_csv(entry: dict):
     is_new = not os.path.exists(LOG_FILE)
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as csvfile:
+        # REMOVED 'username' from the fieldnames
         writer = csv.DictWriter(csvfile, fieldnames=[
-            "timestamp", "username", "posts", "followers", "following", "is_picture_updated"
+            "timestamp", "posts", "followers", "following", "is_picture_updated"
         ])
         if is_new:
             writer.writeheader()
@@ -101,10 +103,8 @@ def _get_biggest_profile_pic_url(username: str, session_id: str | None) -> str |
         
         hd_versions = detail_info_resp.json().get('user', {}).get('hd_profile_pic_versions', [])
         if hd_versions:
-            # The first item in this list is the highest resolution
             return hd_versions[0].get('url')
         else:
-            # Fallback to the standard HD URL if the versions array is not present
             return detail_info_resp.json().get('user', {}).get('profile_pic_url_hd')
 
     except Exception as e:
@@ -188,14 +188,13 @@ def scrape_and_log(username: str):
             print(f"Downloading to {filename}...")
             download_image(download_url, filename)
         
-        # Get the current time in the Warsaw timezone and format it
         warsaw_tz = ZoneInfo("Europe/Warsaw")
         timestamp_now = datetime.now(warsaw_tz)
         formatted_timestamp = timestamp_now.strftime("%A, %d %B %Y %H:%M")
 
+        # REMOVED 'username' from the dictionary
         entry = {
             "timestamp": formatted_timestamp,
-            "username": username,
             "posts": posts,
             "followers": followers,
             "following": following,
@@ -212,6 +211,4 @@ def scrape_and_log(username: str):
         driver.quit()
 
 if __name__ == "__main__":
-    # To run locally, you might need to install pytz: pip install pytz
-    # And set the INSTAGRAM_SESSION_ID environment variable
     print(scrape_and_log("zlamp_a"))
