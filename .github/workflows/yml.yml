@@ -3,7 +3,8 @@ name: Hourly Instagram Scrape
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # every hour at minute 0 (UTC)
+    # UPDATED: Runs every 4 hours at minute 23 to appear less robotic
+    - cron: '23 */4 * * *'
 
 jobs:
   scrape:
@@ -32,7 +33,6 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          # Added pytz for timezone support
           pip install selenium requests pytz
 
       - name: Run scraper
@@ -46,7 +46,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "📊 Scraper Data Update"
-          file_pattern: "profile_log.csv profile_pics/* last_pic_url.txt"
+          file_pattern: "profile_log.csv profile_pics/* last_pic_hash.txt"
           commit_user_name: "GitHub Actions Bot"
           commit_user_email: "github-actions@github.com"
           commit_author: "GitHub Actions Bot <github-actions@github.com>"
