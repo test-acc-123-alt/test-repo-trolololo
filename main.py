@@ -5,7 +5,12 @@ import requests
 import os
 import csv
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse
+
+# Use the modern zoneinfo if available (Python 3.9+), otherwise fall back to pytz
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from pytz import timezone as ZoneInfo
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -31,9 +36,9 @@ def save_last_pic_url(url):
         f.write(url)
 
 def normalize_url(url: str) -> str:
-    parsed = urlparse(url)
+    parsed = urlparse.urlparse(url)
     cleaned = parsed._replace(query="", fragment="")
-    return urlunparse(cleaned)
+    return urlparse.urlunparse(cleaned)
 
 def download_image(url, filename):
     resp = requests.get(url, stream=True, timeout=30)
@@ -56,7 +61,6 @@ def log_to_csv(entry: dict):
         writer.writerow(entry)
 
 def _get_profile_img_src_from_page(driver) -> str | None:
-    # Fallback method for scraping the visible (often low-quality) image from the page
     try:
         og = driver.find_element(By.CSS_SELECTOR, "meta[property='og:image']")
         return og.get_attribute("content")
@@ -68,26 +72,43 @@ def _get_profile_img_src_from_page(driver) -> str | None:
     except Exception:
         return None
 
-def _get_hd_profile_pic_url(username: str, session_id: str | None) -> str | None:
-    """Fetches the high-resolution profile picture URL from Instagram's JSON endpoint."""
+def _get_biggest_profile_pic_url(username: str, session_id: str | None) -> str | None:
+    """Fetches the highest-resolution profile picture URL using a two-step API call."""
     if not session_id:
         return None
-    
-    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+
     headers = {
-        # This x-ig-app-id is a public key used by Instagram's web app
         'x-ig-app-id': '936619743392459',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     }
-    cookies = { 'sessionid': session_id }
-    
+    cookies = {'sessionid': session_id}
+
     try:
-        response = requests.get(url, headers=headers, cookies=cookies, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        return data.get('data', {}).get('user', {}).get('profile_pic_url_hd')
+        # Step 1: Get user ID from the web profile info endpoint
+        user_info_url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+        user_info_resp = requests.get(user_info_url, headers=headers, cookies=cookies, timeout=10)
+        user_info_resp.raise_for_status()
+        user_id = user_info_resp.json().get('data', {}).get('user', {}).get('id')
+
+        if not user_id:
+            print("Could not retrieve user ID to fetch biggest profile picture.")
+            return None
+
+        # Step 2: Get detailed user info using the user ID
+        detail_info_url = f"https://i.instagram.com/api/v1/users/{user_id}/info/"
+        detail_info_resp = requests.get(detail_info_url, headers=headers, cookies=cookies, timeout=10)
+        detail_info_resp.raise_for_status()
+        
+        hd_versions = detail_info_resp.json().get('user', {}).get('hd_profile_pic_versions', [])
+        if hd_versions:
+            # The first item in this list is the highest resolution
+            return hd_versions[0].get('url')
+        else:
+            # Fallback to the standard HD URL if the versions array is not present
+            return detail_info_resp.json().get('user', {}).get('profile_pic_url_hd')
+
     except Exception as e:
-        print(f"Could not fetch HD profile picture via API: {e}")
+        print(f"Could not fetch biggest profile picture via API: {e}")
         return None
 
 def _get_profile_stats(driver) -> tuple[str | None, str | None, str | None]:
@@ -112,7 +133,6 @@ def _get_profile_stats(driver) -> tuple[str | None, str | None, str | None]:
         pass
     return None, None, None
 
-# --- Main Scraper ---
 def scrape_and_log(username: str):
     profile_url = f"https://www.instagram.com/{username}/"
 
@@ -145,10 +165,8 @@ def scrape_and_log(username: str):
         
         driver.get(profile_url)
 
-        # Scrape page for stats
         posts, followers, following = _get_profile_stats(driver)
         
-        # Scrape on-page picture for change detection
         on_page_pic_url = _get_profile_img_src_from_page(driver)
         if not on_page_pic_url:
              raise RuntimeError("Could not locate profile picture on the page.")
@@ -159,24 +177,24 @@ def scrape_and_log(username: str):
 
         if current_pic_url != last_pic_url:
             is_updated = 1
-            print("New picture detected. Attempting to download high-resolution version.")
+            print("New picture detected. Attempting to download highest resolution version.")
             save_last_pic_url(current_pic_url)
 
-            # If changed, try to get the HD URL for the best quality download
-            hd_url = _get_hd_profile_pic_url(username, session_id)
-            
-            # Use HD URL if available, otherwise use the on-page URL as a fallback
-            download_url = hd_url if hd_url else on_page_pic_url
+            download_url = _get_biggest_profile_pic_url(username, session_id) or on_page_pic_url
             
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # UPDATED: Filename no longer contains the username
             filename = f"{ts}_profile.jpg"
             
             print(f"Downloading to {filename}...")
             download_image(download_url, filename)
+        
+        # Get the current time in the Warsaw timezone and format it
+        warsaw_tz = ZoneInfo("Europe/Warsaw")
+        timestamp_now = datetime.now(warsaw_tz)
+        formatted_timestamp = timestamp_now.strftime("%A, %d %B %Y %H:%M")
 
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": formatted_timestamp,
             "username": username,
             "posts": posts,
             "followers": followers,
@@ -194,4 +212,6 @@ def scrape_and_log(username: str):
         driver.quit()
 
 if __name__ == "__main__":
+    # To run locally, you might need to install pytz: pip install pytz
+    # And set the INSTAGRAM_SESSION_ID environment variable
     print(scrape_and_log("zlamp_a"))
