@@ -20,15 +20,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 
 # --- Config ---
-# MODIFIED: Changed from URL tracking to hash tracking
 LAST_PIC_HASH_FILE = "last_pic_hash.txt"
 PIC_DIR       = "profile_pics"
 LOG_FILE      = "profile_log.csv"
 
 # --- Helpers ---
-# MODIFIED: Functions now work with hashes instead of URLs
 def load_last_pic_hash():
     if os.path.exists(LAST_PIC_HASH_FILE):
         with open(LAST_PIC_HASH_FILE, "r") as f:
@@ -62,35 +61,24 @@ def _get_profile_img_src_from_page(driver) -> str | None:
         return None
 
 def _get_biggest_profile_pic_url(username: str, session_id: str | None) -> str | None:
-    """Fetches the highest-resolution profile picture URL using a two-step API call."""
     if not session_id:
         return None
-
     headers = {
         'x-ig-app-id': '936619743392459',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     }
     cookies = {'sessionid': session_id}
-
     try:
         user_info_url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
         user_info_resp = requests.get(user_info_url, headers=headers, cookies=cookies, timeout=10)
         user_info_resp.raise_for_status()
         user_id = user_info_resp.json().get('data', {}).get('user', {}).get('id')
-
-        if not user_id:
-            return None
-
+        if not user_id: return None
         detail_info_url = f"https://i.instagram.com/api/v1/users/{user_id}/info/"
         detail_info_resp = requests.get(detail_info_url, headers=headers, cookies=cookies, timeout=10)
         detail_info_resp.raise_for_status()
-        
         hd_versions = detail_info_resp.json().get('user', {}).get('hd_profile_pic_versions', [])
-        if hd_versions:
-            return hd_versions[0].get('url')
-        else:
-            return detail_info_resp.json().get('user', {}).get('profile_pic_url_hd')
-
+        return hd_versions[0].get('url') if hd_versions else detail_info_resp.json().get('user', {}).get('profile_pic_url_hd')
     except Exception as e:
         print(f"Could not fetch biggest profile picture via API: {e}")
         return None
@@ -119,7 +107,6 @@ def _get_profile_stats(driver) -> tuple[str | None, str | None, str | None]:
 
 def scrape_and_log(username: str):
     profile_url = f"https://www.instagram.com/{username}/"
-
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -127,20 +114,13 @@ def scrape_and_log(username: str):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US,en")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    )
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 
-    chrome_path = os.environ.get("CHROME_PATH")
-    driver_path = os.environ.get("CHROMEDRIVER_PATH")
-    if chrome_path:
-        options.binary_location = chrome_path
-    if not driver_path:
-        raise RuntimeError("Could not find chromedriver path.")
-    service = Service(executable_path=driver_path)
-    driver = webdriver.Chrome(service=service, options=options)
-    
+    driver = None
     try:
+        service = Service(executable_path=os.environ.get("CHROMEDRIVER_PATH"))
+        driver = webdriver.Chrome(service=service, options=options)
+        
         session_id = os.environ.get("INSTAGRAM_SESSION_ID")
         if session_id:
             driver.get("https://www.instagram.com/")
@@ -148,22 +128,28 @@ def scrape_and_log(username: str):
             print("Successfully added session cookie.")
         
         driver.get(profile_url)
+        time.sleep(3) # Wait for page to load and potentially redirect
+
+        # NEW: Check if we landed on a login page by looking for the password field.
+        if driver.find_elements(By.NAME, "password"):
+            raise RuntimeError(
+                "Authentication failed: Landed on a login page. "
+                "Your INSTAGRAM_SESSION_ID cookie is likely expired or invalid. "
+                "Please update it in your GitHub Secrets."
+            )
+        print("Authentication successful, proceeding with scrape.")
 
         posts, followers, following = _get_profile_stats(driver)
-        
-        # Determine which URL to use for the picture
         pic_url_to_check = _get_biggest_profile_pic_url(username, session_id) or _get_profile_img_src_from_page(driver)
         
         if not pic_url_to_check:
             raise RuntimeError("Could not locate profile picture using any method.")
 
-        # --- New Change Detection using Hashing ---
         is_updated = 0
         try:
             response = requests.get(pic_url_to_check, timeout=30)
             response.raise_for_status()
             image_content = response.content
-
             current_hash = hashlib.md5(image_content).hexdigest()
             last_hash = load_last_pic_hash()
             
@@ -171,8 +157,6 @@ def scrape_and_log(username: str):
                 is_updated = 1
                 print("New picture detected (hashes do not match). Saving new image.")
                 save_last_pic_hash(current_hash)
-                
-                # Save the new image content to a file
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"{ts}_profile.jpg"
                 path = os.path.join(PIC_DIR, filename)
@@ -183,10 +167,8 @@ def scrape_and_log(username: str):
 
         except requests.exceptions.RequestException as e:
             print(f"Failed to download image for hashing: {e}")
-            # is_updated remains 0, so we log that no change was detected
         
         warsaw_tz = ZoneInfo("Europe/Warsaw")
-        timestamp_now = datetime.now(warsaw_tz)
         formatted_timestamp = timestamp_now.strftime("%A, %d %B %Y %H:%M")
 
         entry = {
@@ -201,10 +183,12 @@ def scrape_and_log(username: str):
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        driver.save_screenshot("error_screenshot.png")
+        if driver:
+            driver.save_screenshot("error_screenshot.png")
         raise
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 if __name__ == "__main__":
     print(scrape_and_log("zlamp_a"))
