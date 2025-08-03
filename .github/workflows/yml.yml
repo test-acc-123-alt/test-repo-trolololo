@@ -18,7 +18,6 @@ jobs:
         with:
           python-version: '3.x'
 
-      # Install Google Chrome and matching ChromeDriver
       - name: Set up Chrome + ChromeDriver
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
@@ -43,9 +42,9 @@ jobs:
         env:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+          INSTAGRAM_SESSION_ID: ${{ secrets.INSTAGRAM_SESSION_ID }}
         run: python main.py
 
-      # Add this step to upload the screenshot if the script fails
       - name: Upload screenshot on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -54,14 +53,12 @@ jobs:
           path: error_screenshot.png
           retention-days: 7
 
-      # Persist the CSV log
       - name: Upload profile log
         uses: actions/upload-artifact@v4
         with:
           name: profile-log
           path: profile_log.csv
 
-      # Persist all downloaded pictures
       - name: Upload profile pictures
         uses: actions/upload-artifact@v4
         with:
