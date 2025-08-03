@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      # Install Google Chrome (for Testing) and matching ChromeDriver
+      # Install Google Chrome and matching ChromeDriver
       - name: Set up Chrome + ChromeDriver
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
@@ -37,13 +37,22 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install selenium webdriver-manager
+          pip install selenium webdriver-manager requests
 
       - name: Run scraper
         env:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
         run: python main.py
+
+      # Add this step to upload the screenshot if the script fails
+      - name: Upload screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot
+          path: error_screenshot.png
+          retention-days: 7
 
       # Persist the CSV log
       - name: Upload profile log
