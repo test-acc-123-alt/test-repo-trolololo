@@ -154,49 +154,38 @@ def _get_follow_counts(driver) -> tuple[str | None, str | None]:
 def scrape_and_log(username: str):
     url = f"https://www.instagram.com/{username}/"
 
-    # 1) Mobile emulation: iPhone X
+    # 1) Mobile emulation and options
     options = Options()
     options.add_experimental_option("mobileEmulation", {"deviceName": "iPhone X"})
-    # Use the modern headless; plus CI‑safe flags
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=0")
     options.add_argument("--window-size=390,844")
     options.add_argument("--lang=en-US,en")
-    # Slightly more “real” UA helps avoid some interstitials
     options.add_argument(
         "--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
     )
 
-    # 2) Tell Selenium where Chrome is
-    #    Prefer CHROME_BIN (we set it in the workflow), then common names (incl. snap path)
-    candidates = [
-        os.environ.get("CHROME_BIN"),
-        "chromium-browser",
-        "chromium",
-        "google-chrome",
-        "chrome",
-        "/snap/bin/chromium",
-    ]
-    for c in candidates:
-        if not c:
-            continue
-        p = shutil.which(c) if os.path.basename(c) == c else (c if os.path.exists(c) else None)
-        if p:
-            options.binary_location = p
-            break
+    # 2) Set Chrome Binary & Driver from environment variables (for GitHub Actions)
+    chrome_path = os.environ.get("CHROME_PATH")
+    driver_path = os.environ.get("CHROMEDRIVER_PATH")
 
-    # 3) Use system chromedriver if available (from apt: chromium-chromedriver)
-    driver_path = shutil.which("chromedriver")
+    if chrome_path:
+        options.binary_location = chrome_path
+    
+    # Fallback for local execution if env vars aren't set
     if not driver_path and ChromeDriverManager:
+        print("CHROMEDRIVER_PATH not set, using webdriver-manager.")
         driver_path = ChromeDriverManager().install()
-    service = Service(executable_path=driver_path) if driver_path else Service()
 
+    if not driver_path:
+        raise RuntimeError("Could not find chromedriver. Set CHROMEDRIVER_PATH or install it in your PATH.")
+
+    service = Service(executable_path=driver_path)
     driver = webdriver.Chrome(service=service, options=options)
-
+    
     try:
         driver.get(url)
 
@@ -234,6 +223,10 @@ def scrape_and_log(username: str):
         log_to_csv(entry)
         return entry
 
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        driver.save_screenshot("error_screenshot.png") # Save screenshot on error
+        raise # Re-raise the exception to ensure the workflow fails correctly
     finally:
         driver.quit()
 
