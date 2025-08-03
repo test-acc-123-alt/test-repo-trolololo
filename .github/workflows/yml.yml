@@ -9,29 +9,24 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
 
+    # Grant permissions for the action to push to your repo
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Set up Chrome + ChromeDriver
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
+        uses: browser-actions/setup-chrome@v1
         with:
           install-dependencies: true
-          install-chromedriver: true
-          chrome-version: stable
-
-      - name: Show browser paths
-        run: |
-          echo "Chrome: ${{ steps.setup-chrome.outputs.chrome-path }}"
-          echo "ChromeDriver: ${{ steps.setup-chrome.outputs.chromedriver-path }}"
-          ${{ steps.setup-chrome.outputs.chrome-path }} --version
-          ${{ steps.setup-chrome.outputs.chromedriver-path }} --version
 
       - name: Install Python deps
         run: |
@@ -45,22 +40,11 @@ jobs:
           INSTAGRAM_SESSION_ID: ${{ secrets.INSTAGRAM_SESSION_ID }}
         run: python main.py
 
-      - name: Upload screenshot on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          name: error-screenshot
-          path: error_screenshot.png
-          retention-days: 7
-
-      - name: Upload profile log
-        uses: actions/upload-artifact@v4
-        with:
-          name: profile-log
-          path: profile_log.csv
-
-      - name: Upload profile pictures
-        uses: actions/upload-artifact@v4
-        with:
-          name: profile-pics
-          path: profile_pics/
+          commit_message: "📊 Scraper Data Update"
+          file_pattern: "profile_log.csv profile_pics/* last_pic_url.txt"
+          commit_user_name: "GitHub Actions Bot"
+          commit_user_email: "github-actions@github.com"
+          commit_author: "GitHub Actions Bot <github-actions@github.com>"
