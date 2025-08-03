@@ -1,14 +1,3 @@
-Of course. I've updated the script to address both points.
-
-The new version will first attempt to fetch the **high-resolution profile picture** using Instagram's data endpoint. If that fails, it will fall back to the on-page image. The downloaded file will also be renamed to the format `TIMESTAMP_profile.jpg`, **removing the username**.
-
------
-
-### \#\# `main.py` (Full Updated Code)
-
-Here is the complete, modified `main.py` file. No changes are needed for your workflow file.
-
-```python
 import time
 import re
 import shutil
@@ -206,4 +195,3 @@ def scrape_and_log(username: str):
 
 if __name__ == "__main__":
     print(scrape_and_log("zlamp_a"))
-```
