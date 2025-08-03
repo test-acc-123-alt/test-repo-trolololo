@@ -4,6 +4,7 @@ import shutil
 import requests
 import os
 import csv
+import hashlib
 from datetime import datetime
 from urllib import parse
 
@@ -21,40 +22,26 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # --- Config ---
-LAST_PIC_FILE = "last_pic_url.txt"
+# MODIFIED: Changed from URL tracking to hash tracking
+LAST_PIC_HASH_FILE = "last_pic_hash.txt"
 PIC_DIR       = "profile_pics"
 LOG_FILE      = "profile_log.csv"
 
 # --- Helpers ---
-def load_last_pic_url():
-    if os.path.exists(LAST_PIC_FILE):
-        with open(LAST_PIC_FILE, "r") as f:
+# MODIFIED: Functions now work with hashes instead of URLs
+def load_last_pic_hash():
+    if os.path.exists(LAST_PIC_HASH_FILE):
+        with open(LAST_PIC_HASH_FILE, "r") as f:
             return f.read().strip()
     return None
 
-def save_last_pic_url(url):
-    with open(LAST_PIC_FILE, "w") as f:
-        f.write(url)
-
-def normalize_url(url: str) -> str:
-    parsed = parse.urlparse(url)
-    cleaned = parsed._replace(query="", fragment="")
-    return parse.urlunparse(cleaned)
-
-def download_image(url, filename):
-    resp = requests.get(url, stream=True, timeout=30)
-    resp.raise_for_status()
-    os.makedirs(PIC_DIR, exist_ok=True)
-    path = os.path.join(PIC_DIR, filename)
-    with open(path, "wb") as f:
-        for chunk in resp.iter_content(8192):
-            f.write(chunk)
-    return path
+def save_last_pic_hash(h: str):
+    with open(LAST_PIC_HASH_FILE, "w") as f:
+        f.write(h)
 
 def log_to_csv(entry: dict):
     is_new = not os.path.exists(LOG_FILE)
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as csvfile:
-        # REMOVED 'username' from the fieldnames
         writer = csv.DictWriter(csvfile, fieldnames=[
             "timestamp", "posts", "followers", "following", "is_picture_updated"
         ])
@@ -86,17 +73,14 @@ def _get_biggest_profile_pic_url(username: str, session_id: str | None) -> str |
     cookies = {'sessionid': session_id}
 
     try:
-        # Step 1: Get user ID from the web profile info endpoint
         user_info_url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
         user_info_resp = requests.get(user_info_url, headers=headers, cookies=cookies, timeout=10)
         user_info_resp.raise_for_status()
         user_id = user_info_resp.json().get('data', {}).get('user', {}).get('id')
 
         if not user_id:
-            print("Could not retrieve user ID to fetch biggest profile picture.")
             return None
 
-        # Step 2: Get detailed user info using the user ID
         detail_info_url = f"https://i.instagram.com/api/v1/users/{user_id}/info/"
         detail_info_resp = requests.get(detail_info_url, headers=headers, cookies=cookies, timeout=10)
         detail_info_resp.raise_for_status()
@@ -167,32 +151,44 @@ def scrape_and_log(username: str):
 
         posts, followers, following = _get_profile_stats(driver)
         
-        on_page_pic_url = _get_profile_img_src_from_page(driver)
-        if not on_page_pic_url:
-             raise RuntimeError("Could not locate profile picture on the page.")
+        # Determine which URL to use for the picture
+        pic_url_to_check = _get_biggest_profile_pic_url(username, session_id) or _get_profile_img_src_from_page(driver)
+        
+        if not pic_url_to_check:
+            raise RuntimeError("Could not locate profile picture using any method.")
 
-        current_pic_url = normalize_url(on_page_pic_url)
-        last_pic_url = load_last_pic_url()
+        # --- New Change Detection using Hashing ---
         is_updated = 0
+        try:
+            response = requests.get(pic_url_to_check, timeout=30)
+            response.raise_for_status()
+            image_content = response.content
 
-        if current_pic_url != last_pic_url:
-            is_updated = 1
-            print("New picture detected. Attempting to download highest resolution version.")
-            save_last_pic_url(current_pic_url)
+            current_hash = hashlib.md5(image_content).hexdigest()
+            last_hash = load_last_pic_hash()
+            
+            if current_hash != last_hash:
+                is_updated = 1
+                print("New picture detected (hashes do not match). Saving new image.")
+                save_last_pic_hash(current_hash)
+                
+                # Save the new image content to a file
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{ts}_profile.jpg"
+                path = os.path.join(PIC_DIR, filename)
+                os.makedirs(PIC_DIR, exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(image_content)
+                print(f"Saved new image to {path}")
 
-            download_url = _get_biggest_profile_pic_url(username, session_id) or on_page_pic_url
-            
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{ts}_profile.jpg"
-            
-            print(f"Downloading to {filename}...")
-            download_image(download_url, filename)
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to download image for hashing: {e}")
+            # is_updated remains 0, so we log that no change was detected
         
         warsaw_tz = ZoneInfo("Europe/Warsaw")
         timestamp_now = datetime.now(warsaw_tz)
         formatted_timestamp = timestamp_now.strftime("%A, %d %B %Y %H:%M")
 
-        # REMOVED 'username' from the dictionary
         entry = {
             "timestamp": formatted_timestamp,
             "posts": posts,
