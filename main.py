@@ -5,6 +5,7 @@ import requests
 import os
 import csv
 import hashlib
+import random
 from datetime import datetime
 from urllib import parse
 
@@ -70,12 +71,12 @@ def _get_biggest_profile_pic_url(username: str, session_id: str | None) -> str |
     cookies = {'sessionid': session_id}
     try:
         user_info_url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
-        user_info_resp = requests.get(user_info_url, headers=headers, cookies=cookies, timeout=10)
+        user_info_resp = requests.get(user_info_url, headers=headers, cookies=cookies, timeout=15)
         user_info_resp.raise_for_status()
         user_id = user_info_resp.json().get('data', {}).get('user', {}).get('id')
         if not user_id: return None
         detail_info_url = f"https://i.instagram.com/api/v1/users/{user_id}/info/"
-        detail_info_resp = requests.get(detail_info_url, headers=headers, cookies=cookies, timeout=10)
+        detail_info_resp = requests.get(detail_info_url, headers=headers, cookies=cookies, timeout=15)
         detail_info_resp.raise_for_status()
         hd_versions = detail_info_resp.json().get('user', {}).get('hd_profile_pic_versions', [])
         return hd_versions[0].get('url') if hd_versions else detail_info_resp.json().get('user', {}).get('profile_pic_url_hd')
@@ -128,9 +129,9 @@ def scrape_and_log(username: str):
             print("Successfully added session cookie.")
         
         driver.get(profile_url)
-        time.sleep(3) # Wait for page to load and potentially redirect
+        # ADDED: Random delay to mimic human behavior
+        time.sleep(random.uniform(4, 8))
 
-        # NEW: Check if we landed on a login page by looking for the password field.
         if driver.find_elements(By.NAME, "password"):
             raise RuntimeError(
                 "Authentication failed: Landed on a login page. "
@@ -147,6 +148,8 @@ def scrape_and_log(username: str):
 
         is_updated = 0
         try:
+            # ADDED: Random delay before image download
+            time.sleep(random.uniform(2, 5))
             response = requests.get(pic_url_to_check, timeout=30)
             response.raise_for_status()
             image_content = response.content
@@ -169,6 +172,7 @@ def scrape_and_log(username: str):
             print(f"Failed to download image for hashing: {e}")
         
         warsaw_tz = ZoneInfo("Europe/Warsaw")
+        timestamp_now = datetime.now(warsaw_tz)
         formatted_timestamp = timestamp_now.strftime("%A, %d %B %Y %H:%M")
 
         entry = {
